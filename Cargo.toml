@@ -6,7 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bigdecimal = { version = "0.3.0" }
+serde = { version = "1.0", features = ["derive"] }
+eint = "0.1.6"
+malachite-nz = "0.2.2"
+malachite-base = "0.2.2"
+
+num-bigint = "0.4.3"
 
 [dev-dependencies]
 anyhow = "1.0.56"

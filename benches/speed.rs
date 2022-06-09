@@ -7,7 +7,8 @@ use nekoton_abi::{FunctionExt, PackAbiPlain, UnpackAbi, UnpackAbiPlain};
 use nekoton_utils::TrustMe;
 use ton_block::MsgAddressInt;
 
-use tonswap_pair::{Direction, Pair};
+use tonswap_pair::normal_pair::{Direction, Pair};
+use tonswap_pair::utils::{mul_divc, mul_divc_dec, mul_divc_mal, mul_divc_native};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let left = 266342825246179940;
@@ -41,6 +42,42 @@ fn criterion_benchmark(c: &mut Criterion) {
     })
     .bench_function("contract", |b| {
         b.iter(|| contract_pair.expected_exchange(1234, address.clone()))
+    })
+    .bench_function("muldiv_native", |b| {
+        b.iter(|| {
+            mul_divc_native(
+                black_box(4611686018427387904),
+                black_box(4611686018427387904),
+                black_box(1234),
+            )
+        })
+    })
+    .bench_function("muldiv", |b| {
+        b.iter(|| {
+            mul_divc(
+                black_box(4611686018427387904),
+                black_box(4611686018427387904),
+                black_box(1234),
+            )
+        })
+    })
+    .bench_function("muldiv_mal", |b| {
+        b.iter(|| {
+            mul_divc_mal(
+                black_box(4611686018427387904),
+                black_box(4611686018427387904),
+                black_box(1234),
+            )
+        })
+    })
+    .bench_function("muldiv_dec", |b| {
+        b.iter(|| {
+            mul_divc_dec(
+                black_box(4611686018427387904),
+                black_box(4611686018427387904),
+                black_box(1234),
+            )
+        })
     });
 }
 
@@ -64,8 +101,8 @@ impl DexPair {
             spent_token_root: MsgAddressInt,
         }
 
-        let contract = include_bytes!("dexPairv3.json");
-        let contract = ton_abi::Contract::load(contract.as_slice())?;
+        let contract = include_str!("dexPairv3.json");
+        let contract = ton_abi::Contract::load(contract)?;
         let fun = contract.function("expectedExchange").trust_me();
         let tokens = ExpectedExchangeInput {
             _answer_id: 0,
