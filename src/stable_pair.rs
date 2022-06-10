@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use anyhow::anyhow;
 
 use malachite_base::num::{
     arithmetic::traits::Pow, basic::traits::*, conversion::traits::CheckedFrom,
@@ -286,6 +287,14 @@ impl StablePair {
             amount: u128::checked_from(&result.amount)?,
             fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
         })
+    }
+
+    pub fn update_balances(&mut self, balances: Vec<u128>) -> Result<(), anyhow::Error> {
+        for (i , balance) in balances.into_iter().enumerate() {
+            let token = self.token_data.get_mut(i).ok_or_else(|| anyhow!("invalid tokens len"))?;
+            token.balance = balance.into();
+        }
+        Ok(())
     }
 }
 
