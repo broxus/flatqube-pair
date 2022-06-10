@@ -6,9 +6,10 @@ use nekoton::transport::models::ExistingContract;
 use nekoton_abi::{FunctionExt, PackAbiPlain, UnpackAbi, UnpackAbiPlain};
 use nekoton_utils::TrustMe;
 use ton_block::MsgAddressInt;
-
-use tonswap_pair::normal_pair::{Direction, Pair};
-use tonswap_pair::utils::{mul_divc, mul_divc_dec, mul_divc_mal, mul_divc_native};
+use tonswap_pair::{
+    normal_pair::{Direction, Pair},
+    utils::{mul_divc, mul_divc_dec, mul_divc_mal, mul_divc_native},
+};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let left = 266342825246179940;
@@ -55,24 +56,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     .bench_function("muldiv", |b| {
         b.iter(|| {
             mul_divc(
-                black_box(4611686018427387904),
-                black_box(4611686018427387904),
-                black_box(1234),
-            )
-        })
-    })
-    .bench_function("muldiv_mal", |b| {
-        b.iter(|| {
-            mul_divc_mal(
-                black_box(4611686018427387904),
-                black_box(4611686018427387904),
-                black_box(1234),
-            )
-        })
-    })
-    .bench_function("muldiv_dec", |b| {
-        b.iter(|| {
-            mul_divc_dec(
                 black_box(4611686018427387904),
                 black_box(4611686018427387904),
                 black_box(1234),

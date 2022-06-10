@@ -1,5 +1,6 @@
-use crate::utils::mul_divc;
 use serde::{Deserialize, Serialize};
+
+use crate::utils::mul_divc;
 
 #[derive(Serialize, Deserialize)]
 pub struct Pair {

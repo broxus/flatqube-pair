@@ -11,8 +11,6 @@ eint = "0.1.6"
 malachite-nz = "0.2.2"
 malachite-base = "0.2.2"
 
-num-bigint = "0.4.3"
-
 [dev-dependencies]
 anyhow = "1.0.56"
 criterion = "0.3.5"
@@ -27,4 +25,8 @@ ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 
 [[bench]]
 name = "speed"
+harness = false
+
+[[bench]]
+name= "speed_stable"
 harness = false

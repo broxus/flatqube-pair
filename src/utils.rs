@@ -1,7 +1,10 @@
-use malachite_base::num::basic::traits::*;
-use malachite_nz::natural::Natural;
-use num_bigint::BigUint;
 use std::borrow::Borrow;
+
+use malachite_base::{
+    num::{arithmetic::traits::DivRound, basic::traits::*},
+    rounding_modes::RoundingMode,
+};
+use malachite_nz::natural::Natural;
 
 pub fn mul_divc(val: u128, num: u128, denom: u128) -> Option<u128> {
     if denom == 0 {
@@ -19,31 +22,6 @@ pub fn mul_divc(val: u128, num: u128, denom: u128) -> Option<u128> {
     Some(r.0 .0)
 }
 
-pub fn mul_divc_native(val: u128, num: u128, denom: u128) -> Option<u128> {
-    if denom == 0 {
-        return None;
-    }
-
-    let r = (val.checked_mul(num)? + (denom - 1)).checked_div(denom)?; // biguint is used to check overflow, using plain u128
-
-    Some(r)
-}
-
-pub fn mul_divc_dec(val: u128, num: u128, denom: u128) -> Option<BigUint> {
-    if denom == 0 {
-        return None;
-    }
-    let val = BigUint::from(val);
-    let num = BigUint::from(num);
-    let denom = BigUint::from(denom);
-
-    let r = (&val * &num + (&denom - BigUint::from(1u128))) / denom; // biguint is used to check overflow, using plain u128
-    if r >= BigUint::from(u128::max_value()) {
-        return None;
-    }
-    Some(r)
-}
-
 pub fn mul_divc_mal<V, NUM, DENOM>(val: V, num: NUM, denom: DENOM) -> Option<Natural>
 where
     V: Borrow<Natural>,
@@ -57,10 +35,8 @@ where
     if denom == &Natural::ZERO {
         return None;
     }
-    let r = (val * num + (denom - &Natural::ONE)) / denom; // biguint is used to check overflow, using plain u128
-    if r >= Natural::from(u128::MAX) {
-        return None;
-    }
+    let r = (val * num).div_round(denom, RoundingMode::Ceiling);
+
     Some(r)
 }
 
@@ -77,10 +53,8 @@ where
     if denom == &Natural::ZERO {
         return None;
     }
-    let r = val * num + ((denom >> 1) / denom);
-    if r > Natural::from(u128::MAX) {
-        return None;
-    }
+    let r = (val * num).div_round(denom, RoundingMode::Floor);
+
     Some(r)
 }
 
