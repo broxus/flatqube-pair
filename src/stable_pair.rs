@@ -15,7 +15,7 @@ pub const N_COINS: u8 = 2;
 
 type Address = [u8; 32];
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TokenData {
     balance: Natural,
     decimals: u8,
@@ -23,20 +23,20 @@ struct TokenData {
     precision_mul: Natural,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FeeParams {
     pub denominator: Natural,
     pub pool_numerator: Natural,
     pub beneficiary_numerator: Natural,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AmplificationCoefficient {
     pub value: Natural,
     pub precision: Natural,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StablePair {
     precision: Natural,
 
