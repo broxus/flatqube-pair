@@ -57,33 +57,3 @@ where
 
     Some(r)
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_eq() {
-        let mut a = 1;
-        loop {
-            let res = mul_divc(a, a, 3);
-            let res_native = mul_divc_native(a, a, 3);
-            if res != res_native {
-                println!("{}", a);
-                println!("{:?}", res);
-                println!("{:?}", res_native);
-                panic!("");
-            }
-            a *= 2;
-            if res.is_none() {
-                break;
-            }
-        }
-    }
-
-    #[test]
-    fn test() {
-        assert_eq!(mul_divc(3, 7, 2).unwrap(), 11);
-        assert_eq!(mul_divc_native(3, 7, 2).unwrap(), 11);
-    }
-}

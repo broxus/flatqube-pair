@@ -44,10 +44,16 @@ impl Pair {
 
     pub fn expected_spend_amount(
         &self,
+        direction: Direction,
         b_amount: u128,
-        a_pool: u128,
-        b_pool: u128,
     ) -> Option<SwapResult> {
+        if b_amount == 0 {
+            return None;
+        }
+        let (a_pool, b_pool) = match direction {
+            Direction::LeftToRight => (self.left_amount, self.right_amount),
+            Direction::RightToLeft => (self.right_amount, self.left_amount),
+        };
         let fee_d_minus_n = self.fee_denominator - self.fee_numerator;
 
         let new_b_pool = b_pool - b_amount;
@@ -75,6 +81,8 @@ pub struct SwapResult {
 
 #[cfg(test)]
 mod test {
+    use crate::normal_pair::Direction;
+
     #[test]
     fn test_swap() {
         let left = 266342825246179940;
@@ -85,6 +93,20 @@ mod test {
             .unwrap();
         assert_eq!(got.amount, 27076);
         assert_eq!(got.fee, 369369369370);
+
+        let left = 6638;
+        let right = 125203;
+        let pair = super::Pair::new(left, right);
+        let got = pair
+            .expected_spend_amount(Direction::RightToLeft, 100)
+            .unwrap();
+        assert_eq!(got.amount, 1922);
+        assert_eq!(got.fee, 6);
+        let got = pair
+            .expected_spend_amount(Direction::LeftToRight, 100)
+            .unwrap();
+        assert_eq!(got.amount, 7);
+        assert_eq!(got.fee, 1);
     }
 
     #[test]

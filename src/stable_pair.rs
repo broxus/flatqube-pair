@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use anyhow::anyhow;
 
+use anyhow::anyhow;
 use malachite_base::num::{
     arithmetic::traits::Pow, basic::traits::*, conversion::traits::CheckedFrom,
 };
@@ -294,8 +294,11 @@ impl StablePair {
     }
 
     pub fn update_balances(&mut self, balances: Vec<u128>) -> Result<(), anyhow::Error> {
-        for (i , balance) in balances.into_iter().enumerate() {
-            let token = self.token_data.get_mut(i).ok_or_else(|| anyhow!("invalid tokens len"))?;
+        for (i, balance) in balances.into_iter().enumerate() {
+            let token = self
+                .token_data
+                .get_mut(i)
+                .ok_or_else(|| anyhow!("invalid tokens len"))?;
             token.balance = balance.into();
         }
         Ok(())
@@ -387,6 +390,44 @@ mod tests {
                 beneficiary_numerator: Natural::ZERO,
                 // beneficiary: Default::default(),
                 // threshold: Default::default(),
+            },
+        )
+        .unwrap();
+        pair
+    }
+
+    #[test]
+    fn test_real() {
+        let pair = create_real();
+
+        let res = pair.expected_exchange(1_000_000, &[0; 32]).unwrap();
+        dbg!(res);
+    }
+
+    fn create_real() -> StablePair {
+        let token_data = vec![
+            TokenDataInput {
+                decimals: 18,
+                balance: 4988679616589 * 1_000_000,
+            },
+            TokenDataInput {
+                decimals: 18,
+                balance: 4989613045598 * 1_000_000,
+            },
+        ];
+
+        let token_index = HashMap::from([([0; 32], 0), ([1; 32], 1)]);
+        let pair = StablePair::new(
+            token_data,
+            token_index,
+            AmplificationCoefficient {
+                value: Natural::from(200u32),
+                precision: Natural::ONE,
+            },
+            FeeParams {
+                denominator: Natural::from(1000000u32),
+                pool_numerator: Natural::from(0u64),
+                beneficiary_numerator: Natural::from(500u64),
             },
         )
         .unwrap();
