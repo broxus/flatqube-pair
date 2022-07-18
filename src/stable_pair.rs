@@ -15,6 +15,7 @@ pub const N_COINS: u8 = 2;
 
 type Address = [u8; 32];
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct TokenData {
     balance: Natural,
@@ -302,6 +303,10 @@ impl StablePair {
             token.balance = balance.into();
         }
         Ok(())
+    }
+
+    pub fn update_fee_params(&mut self, fee_params: FeeParams) {
+        self.fee = fee_params;
     }
 }
 
