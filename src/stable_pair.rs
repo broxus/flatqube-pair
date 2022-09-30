@@ -6,6 +6,7 @@ use malachite_base::num::{
 };
 use malachite_nz::natural::Natural;
 
+use crate::normal_pair::OneAmountSwapResult;
 use crate::{
     normal_pair::SwapResult,
     utils::{mul_div, mul_divc_mal},
@@ -52,16 +53,13 @@ pub struct TokenDataInput {
     pub balance: u128,
 }
 
-impl StablePair {
-    pub fn new(
-        token_data: Vec<TokenDataInput>,
-        token_index: HashMap<Address, u8>,
-        a: AmplificationCoefficient,
-        fee_params: FeeParams,
-    ) -> Option<Self> {
-        let max_token_decimals = token_data.iter().map(|td| td.decimals).max()?;
-        let precision = Natural::from(10u8).pow(max_token_decimals as u64);
-        let token_data = token_data
+fn try_from_token_data_input_to_token_data_and_precision(
+    token_data: Vec<TokenDataInput>,
+) -> Option<(Vec<TokenData>, Natural)> {
+    let max_token_decimals = token_data.iter().map(|td| td.decimals).max()?;
+    let precision = Natural::from(10u8).pow(max_token_decimals as u64);
+    Some((
+        token_data
             .into_iter()
             .map(|td| {
                 let decimals = td.decimals;
@@ -75,7 +73,20 @@ impl StablePair {
                     precision_mul,
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>(),
+        precision,
+    ))
+}
+
+impl StablePair {
+    pub fn new(
+        token_data: Vec<TokenDataInput>,
+        token_index: HashMap<Address, u8>,
+        a: AmplificationCoefficient,
+        fee_params: FeeParams,
+    ) -> Option<Self> {
+        let (token_data, precision) =
+            try_from_token_data_input_to_token_data_and_precision(token_data)?;
 
         Some(Self {
             precision,
@@ -273,6 +284,57 @@ impl StablePair {
         })
     }
 
+    pub fn expected_exchange_extended(
+        &self,
+        amount: u128,
+        spent_token: &Address,
+        receive_token: &Address,
+    ) -> Option<SwapResult> {
+        let i = *self.token_index.get(spent_token)?;
+        let j = *self.token_index.get(receive_token)?;
+
+        let result = self
+            .get_dy(i, j, Natural::from(amount))
+            .unwrap_or(ExpectedExchangeResult {
+                amount: Natural::ZERO,
+                pool_fee: Natural::ZERO,
+                beneficiary_fee: Natural::ZERO,
+            });
+
+        Some(SwapResult {
+            amount: u128::checked_from(&result.amount)?,
+            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+        })
+    }
+
+    pub fn expected_exchange_extended_one_amount(
+        &self,
+        spent_token: &Address,
+        receive_token: &Address,
+    ) -> Option<OneAmountSwapResult> {
+        let i = *self.token_index.get(spent_token)?;
+        let j = *self.token_index.get(receive_token)?;
+
+        let i_token_data = self.token_data.get(i as usize)?;
+        let j_token_data = self.token_data.get(j as usize)?;
+
+        let one_amount = 10_u128.pow(i_token_data.decimals as u32);
+
+        let result =
+            self.get_dy(i, j, Natural::from(one_amount))
+                .unwrap_or(ExpectedExchangeResult {
+                    amount: Natural::ZERO,
+                    pool_fee: Natural::ZERO,
+                    beneficiary_fee: Natural::ZERO,
+                });
+
+        Some(OneAmountSwapResult {
+            amount: u128::checked_from(&result.amount)?,
+            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            decimals: j_token_data.decimals,
+        })
+    }
+
     pub fn expected_spend_amount(
         &self,
         receive_amount: u128,
@@ -294,6 +356,57 @@ impl StablePair {
         })
     }
 
+    pub fn expected_spend_amount_extended(
+        &self,
+        receive_amount: u128,
+        receive_token_root: &Address,
+        spent_token_root: &Address,
+    ) -> Option<SwapResult> {
+        let j = *self.token_index.get(receive_token_root)?;
+        let i = *self.token_index.get(spent_token_root)?;
+
+        let result =
+            self.get_dx(i, j, Natural::from(receive_amount))
+                .unwrap_or(ExpectedExchangeResult {
+                    amount: Natural::ZERO,
+                    pool_fee: Natural::ZERO,
+                    beneficiary_fee: Natural::ZERO,
+                });
+
+        Some(SwapResult {
+            amount: u128::checked_from(&result.amount)?,
+            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+        })
+    }
+
+    pub fn expected_spend_amount_extended_one_amount(
+        &self,
+        receive_token_root: &Address,
+        spent_token_root: &Address,
+    ) -> Option<OneAmountSwapResult> {
+        let j = *self.token_index.get(receive_token_root)?;
+        let i = *self.token_index.get(spent_token_root)?;
+
+        let j_token_data = self.token_data.get(j as usize)?;
+        let i_token_data = self.token_data.get(i as usize)?;
+
+        let one_amount = 10_u128.pow(j_token_data.decimals as u32);
+
+        let result =
+            self.get_dx(i, j, Natural::from(one_amount))
+                .unwrap_or(ExpectedExchangeResult {
+                    amount: Natural::ZERO,
+                    pool_fee: Natural::ZERO,
+                    beneficiary_fee: Natural::ZERO,
+                });
+
+        Some(OneAmountSwapResult {
+            amount: u128::checked_from(&result.amount)?,
+            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            decimals: i_token_data.decimals,
+        })
+    }
+
     pub fn update_balances(&mut self, balances: Vec<u128>) -> Result<(), anyhow::Error> {
         for (i, balance) in balances.into_iter().enumerate() {
             let token = self
@@ -302,6 +415,24 @@ impl StablePair {
                 .ok_or_else(|| anyhow!("invalid tokens len"))?;
             token.balance = balance.into();
         }
+        Ok(())
+    }
+
+    pub fn update_balances_and_decimals(
+        &mut self,
+        balances: Vec<TokenDataInput>,
+    ) -> Result<(), anyhow::Error> {
+        let (token_data, _) = try_from_token_data_input_to_token_data_and_precision(balances)
+            .ok_or_else(|| anyhow!("cant to token data: cant get max_token_decimals"))?;
+
+        for (index, token_data) in token_data.into_iter().enumerate() {
+            let token = self
+                .token_data
+                .get_mut(index)
+                .ok_or_else(|| anyhow!("invalid tokens len"))?;
+            *token = token_data;
+        }
+
         Ok(())
     }
 

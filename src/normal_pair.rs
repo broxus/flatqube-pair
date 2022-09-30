@@ -79,6 +79,13 @@ pub struct SwapResult {
     pub fee: u128,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct OneAmountSwapResult {
+    pub amount: u128,
+    pub fee: u128,
+    pub decimals: u8,
+}
+
 #[cfg(test)]
 mod test {
     use crate::normal_pair::Direction;
