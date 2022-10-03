@@ -12,8 +12,6 @@ use crate::{
     utils::{mul_div, mul_divc_mal},
 };
 
-pub const N_COINS: u8 = 2;
-
 type Address = [u8; 32];
 
 #[allow(dead_code)]
@@ -98,7 +96,7 @@ impl StablePair {
     }
 
     pub fn get_d(&self, xp: &[Natural]) -> Option<Natural> {
-        let n_coins = Natural::from(N_COINS);
+        let n_coins = Natural::from(xp.len());
 
         let s: Natural = xp.iter().fold(Natural::ZERO, |acc, x| acc + x);
         let mut d_prev;
@@ -130,12 +128,13 @@ impl StablePair {
     }
 
     pub fn get_y(&self, i: u8, j: u8, x: Natural, xp: &[Natural]) -> Option<Natural> {
-        if i == j || i >= N_COINS || j >= N_COINS {
+        let n_coins_small = xp.len() as u8;
+
+        if i == j || i >= n_coins_small || j >= n_coins_small {
             return None;
         }
 
-        let n_coins = Natural::from(N_COINS);
-
+        let n_coins = Natural::from(n_coins_small);
         let d = self.get_d(xp)?;
         let ann = &self.a.value * &n_coins;
         let mut c = d.clone();
@@ -143,7 +142,7 @@ impl StablePair {
         let mut x_temp;
         let mut y_prev;
 
-        for ic in 0..N_COINS {
+        for ic in 0..n_coins_small {
             if ic == i {
                 x_temp = x.clone();
                 s += &x_temp;
@@ -451,6 +450,7 @@ struct ExpectedExchangeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eint::Eint;
 
     #[test]
     fn test_expected_exchange() {
@@ -568,5 +568,116 @@ mod tests {
         )
         .unwrap();
         pair
+    }
+
+    #[test]
+    fn test_npool() {
+        let one: [u8; 32] =
+            hex::decode("0b23ee4983cd1fa2372cf10abf04100414baa9dfd78cf79dcd06c90b60439fb8")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let two: [u8; 32] =
+            hex::decode("0fe478cb30a3bbfd13075549783c48472db97938c0b45010f8a518a0ca2f30a4")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let three: [u8; 32] =
+            hex::decode("eff68fb36f1313ddff888fcd64452954f31c4651b907620d522d3f0725fe31dd")
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+        let pair = create_npool();
+
+        let res = pair.expected_exchange_extended(0, &one, &three).unwrap();
+        assert_eq!(res.amount, 0);
+
+        let res = pair
+            .expected_exchange_extended(10000000, &one, &three)
+            .unwrap();
+        assert_eq!(res.amount, 9969721);
+
+        let res = pair
+            .expected_exchange_extended(12343, &one, &three)
+            .unwrap();
+        assert_eq!(res.amount, 12304);
+
+        let res = pair.expected_exchange_extended(0, &one, &two).unwrap();
+        assert_eq!(res.amount, 0);
+
+        let res = pair.expected_exchange_extended(100, &one, &two).unwrap();
+        assert_eq!(res.amount, 9900);
+
+        let res = pair.expected_exchange_extended(100000, &one, &two).unwrap();
+        assert_eq!(res.amount, 9969703);
+
+        let res = pair
+            .expected_exchange_extended(1000000, &one, &two)
+            .unwrap();
+        assert_eq!(res.amount, 99697028);
+    }
+
+    fn create_npool() -> StablePair {
+        let td = vec![
+            TokenDataInput {
+                balance: 103103904425,
+                decimals: 6,
+            },
+            TokenDataInput {
+                balance: 10036272125538,
+                decimals: 8,
+            },
+            TokenDataInput {
+                balance: 100540680082,
+                decimals: 6,
+            },
+        ];
+        let ti = HashMap::from([
+            (
+                hex::decode("0b23ee4983cd1fa2372cf10abf04100414baa9dfd78cf79dcd06c90b60439fb8")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                0,
+            ),
+            (
+                hex::decode("0fe478cb30a3bbfd13075549783c48472db97938c0b45010f8a518a0ca2f30a4")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                1,
+            ),
+            (
+                hex::decode("eff68fb36f1313ddff888fcd64452954f31c4651b907620d522d3f0725fe31dd")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                2,
+            ),
+        ]);
+        let a = AmplificationCoefficient {
+            value: Natural::from(900u64),
+            precision: Natural::ONE,
+        };
+        let fee = FeeParams {
+            denominator: Natural::from(1000000u32),
+            pool_numerator: Natural::from(3000u64),
+            beneficiary_numerator: Natural::ZERO,
+        };
+        let pair = StablePair::new(td, ti, a, fee).unwrap();
+
+        pair
+    }
+
+    #[test]
+    fn test_int() {
+        let int = eint::E256::from(12345u64);
+        let mut arr = [0; 16];
+        int.put(&mut arr);
+        dbg!(int);
+        let int2 = u128::from_le_bytes(arr);
+        dbg!(int2);
+        assert_eq!(int.u64(), int2 as u64);
     }
 }

@@ -7,14 +7,16 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-eint = "0.1.6"
+eint = "1.0.0"
 malachite-nz = "0.2.2"
 malachite-base = "0.2.2"
 anyhow = "1.0.38"
 
 [dev-dependencies]
 anyhow = "1.0.56"
-criterion = "0.3.5"
+criterion = "0.4.0"
+hex = "0.4.3"
+
 
 nekoton-abi = { git = "https://github.com/broxus/nekoton.git", features = ["nekoton-derive"] }
 nekoton-utils = { git = "https://github.com/broxus/nekoton.git" }
@@ -29,5 +31,5 @@ name = "speed"
 harness = false
 
 [[bench]]
-name= "speed_stable"
+name = "speed_stable"
 harness = false
