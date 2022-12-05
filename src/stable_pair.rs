@@ -407,7 +407,11 @@ impl StablePair {
         })
     }
 
-    pub fn update_balances(&mut self, balances: Vec<u128>) -> Result<(), anyhow::Error> {
+    pub fn update_balances(
+        &mut self,
+        balances: Vec<u128>,
+        lp_supply: u128,
+    ) -> Result<(), anyhow::Error> {
         for (i, balance) in balances.into_iter().enumerate() {
             let token = self
                 .token_data
@@ -415,6 +419,7 @@ impl StablePair {
                 .ok_or_else(|| anyhow!("invalid tokens len"))?;
             token.balance = balance.into();
         }
+        self.lp_supply = lp_supply.into();
         Ok(())
     }
 
