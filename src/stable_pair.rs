@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::anyhow;
-use malachite_base::num::{
-    arithmetic::traits::Pow, basic::traits::*, conversion::traits::CheckedFrom,
-};
+use malachite_base::num::{arithmetic::traits::Pow, basic::traits::*};
 use malachite_nz::natural::Natural;
 
 use crate::normal_pair::OneAmountSwapResult;
@@ -44,6 +42,7 @@ pub struct StablePair {
     a: AmplificationCoefficient,
     fee: FeeParams,
     token_data: Vec<TokenData>,
+    lp_supply: Natural,
 }
 
 pub struct TokenDataInput {
@@ -82,6 +81,7 @@ impl StablePair {
         token_index: HashMap<Address, u8>,
         a: AmplificationCoefficient,
         fee_params: FeeParams,
+        lp_supply: u128,
     ) -> Option<Self> {
         let (token_data, precision) =
             try_from_token_data_input_to_token_data_and_precision(token_data)?;
@@ -92,6 +92,7 @@ impl StablePair {
             a,
             fee: fee_params,
             token_data,
+            lp_supply: Natural::from(lp_supply),
         })
     }
 
@@ -268,7 +269,7 @@ impl StablePair {
 
     pub fn expected_exchange(&self, amount: u128, spent_token: &Address) -> Option<SwapResult> {
         let i = *self.token_index.get(spent_token)?;
-        let j = if i == 0 { 1 } else { 0 };
+        let j = u8::from(i == 0);
         let result = self
             .get_dy(i, j, Natural::from(amount))
             .unwrap_or(ExpectedExchangeResult {
@@ -278,8 +279,8 @@ impl StablePair {
             });
 
         Some(SwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
         })
     }
 
@@ -301,8 +302,8 @@ impl StablePair {
             });
 
         Some(SwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
         })
     }
 
@@ -328,8 +329,8 @@ impl StablePair {
                 });
 
         Some(OneAmountSwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
             decimals: j_token_data.decimals,
         })
     }
@@ -340,7 +341,7 @@ impl StablePair {
         receive_token_root: &Address,
     ) -> Option<SwapResult> {
         let j = *self.token_index.get(receive_token_root)?;
-        let i = if j == 0 { 1 } else { 0 };
+        let i = u8::from(j == 0);
         let result =
             self.get_dx(i, j, Natural::from(receive_amount))
                 .unwrap_or(ExpectedExchangeResult {
@@ -350,8 +351,8 @@ impl StablePair {
                 });
 
         Some(SwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
         })
     }
 
@@ -373,8 +374,8 @@ impl StablePair {
                 });
 
         Some(SwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
         })
     }
 
@@ -400,8 +401,8 @@ impl StablePair {
                 });
 
         Some(OneAmountSwapResult {
-            amount: u128::checked_from(&result.amount)?,
-            fee: u128::checked_from(&(result.pool_fee + result.beneficiary_fee))?,
+            amount: u128::try_from(&result.amount).ok()?,
+            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
             decimals: i_token_data.decimals,
         })
     }
@@ -438,6 +439,152 @@ impl StablePair {
     pub fn update_fee_params(&mut self, fee_params: FeeParams) {
         self.fee = fee_params;
     }
+
+    // function _xp_mem(uint128[] _balances) internal view returns(uint256[]) {
+    // uint256[] result = new uint256[](0);
+    //
+    // for (uint8 i = 0; i < N_COINS; i++) {
+    // result.push(math.muldiv(tokenData[i].rate, _balances[i], PRECISION));
+    // }
+    //
+    // return result;
+    // }
+
+    fn xp_mem(&self, balances: &[Natural]) -> Option<Vec<Natural>> {
+        let mut result = Vec::new();
+        for (i, balance) in balances.iter().enumerate() {
+            let token_data = self.token_data.get(i)?;
+            result.push(mul_div(&token_data.rate, balance, &self.precision)?);
+        }
+
+        Some(result)
+    }
+
+    pub fn expected_deposit_liquidity(&self, amounts: &[u128]) -> Option<DepositLiquidityResultV2> {
+        let old_balances: Vec<_> = self
+            .token_data
+            .iter()
+            .map(|x| &x.balance)
+            .cloned()
+            .collect();
+
+        let d0 = self.get_d(&self.xp_mem(&old_balances)?)?;
+
+        let mut new_balances = old_balances.clone();
+        let mut pool_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut beneficiary_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut result_balances = old_balances.clone();
+        let mut differences = vec![Natural::ZERO; self.token_data.len()];
+        let lp_reward;
+        let mut sell = vec![false; self.token_data.len()];
+
+        let has_zero_balance = amounts.iter().any(|x| *x == 0);
+        for (i, amount) in amounts.iter().enumerate() {
+            new_balances[i] += Natural::from(*amount);
+        }
+
+        let d1 = self.get_d(&self.xp_mem(&new_balances)?)?;
+        if has_zero_balance && self.lp_supply == Natural::ZERO || d0 >= d1 {
+            return None;
+        }
+
+        let num_coins = self.token_data.len() as u128;
+
+        if self.lp_supply > Natural::ZERO {
+            let fee_numerator = mul_div(
+                &self.fee.pool_numerator + &self.fee.beneficiary_numerator,
+                Natural::from(num_coins),
+                Natural::from(4 * (num_coins - 1)),
+            )?;
+
+            for i in 0..self.token_data.len() {
+                let ideal_balance = mul_div(&d1, &old_balances[i], &d0)?;
+                let new_balance = &new_balances[i];
+                let difference = if &ideal_balance > new_balance {
+                    &ideal_balance - new_balance
+                } else {
+                    new_balance - &ideal_balance
+                };
+                sell[i] = &ideal_balance < new_balance;
+                let fees = mul_divc_mal(&fee_numerator, &difference, &self.fee.denominator)?;
+                beneficiary_fees[i] = mul_div(
+                    &fees,
+                    &self.fee.beneficiary_numerator,
+                    &self.fee.pool_numerator + &self.fee.beneficiary_numerator,
+                )?;
+                pool_fees[i] = &fees - &beneficiary_fees[i];
+                result_balances[i] = new_balance - &beneficiary_fees[i];
+                new_balances[i] = &new_balances[i] - &pool_fees[i] - &beneficiary_fees[i];
+                differences[i] = difference.clone();
+            }
+
+            let d2 = self.get_d(&self.xp_mem(&new_balances)?)?;
+            lp_reward = (&mul_div(&self.lp_supply, &(d2 - &d0), &d0)?)
+                .try_into()
+                .ok()?;
+        } else {
+            result_balances = new_balances;
+            lp_reward = u128::try_from(&d1).ok()?;
+        };
+
+        Some(DepositLiquidityResultV2 {
+            old_balances: old_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            amounts: amounts.to_vec(),
+            lp_reward,
+            result_balances: result_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            invariant: (&d1).try_into().ok()?,
+            differences: differences
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            sell,
+            pool_fees: pool_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            beneficiary_fees: beneficiary_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    pub fn expected_withdraw(&self, lp_amount: u128) -> Option<(u128, u128)> {
+        let left_back_amount = mul_div(
+            &self.token_data[0].balance,
+            Natural::from(lp_amount),
+            &self.lp_supply,
+        )?;
+        let right_back_amount = mul_div(
+            &self.token_data[1].balance,
+            Natural::from(lp_amount),
+            &self.lp_supply,
+        )?;
+
+        Some((
+            (&left_back_amount).try_into().ok()?,
+            (&right_back_amount).try_into().ok()?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepositLiquidityResultV2 {
+    pub old_balances: Vec<u128>,
+    pub amounts: Vec<u128>,
+    pub lp_reward: u128,
+    pub result_balances: Vec<u128>,
+    pub invariant: u128,
+    pub differences: Vec<u128>,
+    pub sell: Vec<bool>,
+    pub pool_fees: Vec<u128>,
+    pub beneficiary_fees: Vec<u128>,
 }
 
 #[derive(Debug, Clone)]
@@ -449,8 +596,9 @@ struct ExpectedExchangeResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use eint::Eint;
+
+    use super::*;
 
     #[test]
     fn test_expected_exchange() {
@@ -500,6 +648,72 @@ mod tests {
         assert_eq!(res.fee, 51198);
     }
 
+    #[test]
+    fn test_expected_deposit() {
+        let pair = create_withdraw_target();
+
+        let res = pair.expected_deposit_liquidity(&[1000, 100]).unwrap();
+
+        assert_eq!(
+            res.old_balances,
+            vec![1515096645740791, 9940268571486323793074983]
+        );
+        assert_eq!(res.amounts, vec![1000, 100]);
+        assert_eq!(res.lp_reward, 512727596511);
+        assert_eq!(
+            res.result_balances,
+            vec![1515096645741790, 9940268571486323569697543]
+        );
+        assert_eq!(res.invariant, 11422079333653762020989407);
+        assert_eq!(res.differences, vec![864, 893510158421]);
+        assert_eq!(res.sell, vec![true, false]);
+        assert_eq!(res.pool_fees, vec![0, 0]);
+        assert_eq!(res.beneficiary_fees, vec![1, 223377540]);
+
+        dbg!(res);
+
+        let res = pair.expected_deposit_liquidity(&[100000, 1000000]).unwrap();
+        assert_eq!(
+            res.old_balances,
+            vec![1515096645740791, 9940268571486323793074983]
+        );
+        assert_eq!(res.amounts, vec![100000, 1000000]);
+        assert_eq!(res.lp_reward, 51312801583529);
+        assert_eq!(
+            res.result_balances,
+            vec![1515096645840769, 9940268571486301456321056]
+        );
+        assert_eq!(res.invariant, 11422079333755406020866269);
+        assert_eq!(res.differences, vec![86382, 89351015707201]);
+        assert_eq!(res.sell, vec![true, false]);
+        assert_eq!(res.pool_fees, vec![0, 0]);
+        assert_eq!(res.beneficiary_fees, vec![22, 22337753927]);
+    }
+
+    #[test]
+    fn expected_withdraw() {
+        let pair = create_withdraw_target();
+        let (left, right) = pair.expected_withdraw(1488).unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(right, 2589);
+
+        let (left, right) = pair.expected_withdraw(438348983948).unwrap();
+        assert_eq!(left, 116);
+        assert_eq!(right, 762964625778);
+
+        let (left, right) = pair.expected_withdraw(0).unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(right, 0);
+
+        let (left, right) = pair.expected_withdraw(1).unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(right, 1);
+
+        let (left, right) = pair.expected_withdraw(2).unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(right, 3);
+    }
+
     fn create_pair() -> StablePair {
         let token_data = vec![
             TokenDataInput {
@@ -524,9 +738,8 @@ mod tests {
                 denominator: Natural::from(1000000u32),
                 pool_numerator: Natural::from(3000u64),
                 beneficiary_numerator: Natural::ZERO,
-                // beneficiary: Default::default(),
-                // threshold: Default::default(),
             },
+            5711020512957239363328239,
         )
         .unwrap();
         pair
@@ -565,6 +778,38 @@ mod tests {
                 pool_numerator: Natural::from(0u64),
                 beneficiary_numerator: Natural::from(500u64),
             },
+            5711020512957239363328239,
+        )
+        .unwrap();
+        pair
+    }
+
+    fn create_withdraw_target() -> StablePair {
+        let token_data = vec![
+            TokenDataInput {
+                decimals: 9,
+                balance: 1515096645740791,
+            },
+            TokenDataInput {
+                decimals: 18,
+                balance: 9940268571486323793074983,
+            },
+        ];
+
+        let token_index = HashMap::from([([0; 32], 0), ([1; 32], 1)]);
+        let pair = StablePair::new(
+            token_data,
+            token_index,
+            AmplificationCoefficient {
+                value: Natural::from(200u32),
+                precision: Natural::ONE,
+            },
+            FeeParams {
+                denominator: Natural::from(1000000u32),
+                pool_numerator: Natural::from(0u64),
+                beneficiary_numerator: Natural::from(500u64),
+            },
+            5711020512957239363328239,
         )
         .unwrap();
         pair
@@ -665,10 +910,13 @@ mod tests {
             pool_numerator: Natural::from(3000u64),
             beneficiary_numerator: Natural::ZERO,
         };
-        let pair = StablePair::new(td, ti, a, fee).unwrap();
+        let pair = StablePair::new(td, ti, a, fee, 5711020512957239363328239).unwrap();
 
         pair
     }
+
+    #[test]
+    fn test_expecte() {}
 
     #[test]
     fn test_int() {
