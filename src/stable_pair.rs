@@ -577,6 +577,42 @@ impl StablePair {
             (&right_back_amount).try_into().ok()?,
         ))
     }
+
+    pub fn expected_witdraw_one_coin(&self, lp_amount: u128, address: [u8; 32]) -> Option<u128> {
+        let index = *self.token_index.get(&address)?;
+
+        self.get_expected_lp_amount(index as usize, lp_amount)
+    }
+
+    pub fn get_expected_lp_amount(&self, i: usize, dy: u128) -> Option<u128> {
+        let token_data = &self.token_data.get(i)?;
+        let dy = Natural::from(dy);
+        if dy >= token_data.balance || dy == 0 {
+            return None;
+        }
+
+        let mut xp = Vec::new();
+        for token_data in self.token_data.iter() {
+            let rate = &token_data.rate;
+            let balance = &token_data.balance;
+            let xp_i = mul_div(rate, balance, &self.precision)?;
+            xp.push(xp_i);
+        }
+
+        let d0 = self.get_d(&xp)?;
+        let dy = mul_divc_mal(&dy, &token_data.rate, &self.precision)?;
+        xp[i] = &xp[i] - &dy;
+        let d1 = self.get_d(&xp)?;
+
+        let lp_raw = mul_divc_mal(&self.lp_supply, &(&d0 - &d1), &d0)?;
+        let lp_res = mul_divc_mal(
+            &lp_raw,
+            &self.fee.denominator,
+            &self.fee.denominator - (&self.fee.pool_numerator + &self.fee.beneficiary_numerator),
+        )?;
+
+        u128::try_from(&lp_res).ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -717,6 +753,26 @@ mod tests {
         let (left, right) = pair.expected_withdraw(2).unwrap();
         assert_eq!(left, 0);
         assert_eq!(right, 3);
+
+        let pair = npool_for_withdraws();
+
+        let one: [u8; 32] =
+            hex::decode("836426076347dc312b950be54846d6415795b32bc664a08ceb034fd7358a2388")
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+        let res = pair.expected_witdraw_one_coin(100, one).unwrap();
+        assert_eq!(res, 101);
+        let res = pair.expected_witdraw_one_coin(1001, one).unwrap();
+        assert_eq!(res, 1003);
+
+        let two = hex::decode("e35765673ccc6c11889483944fcbc005af10c5980eada57f7f080442252f2e2a")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_witdraw_one_coin(10001, two).unwrap();
+        assert_eq!(res, 10032);
     }
 
     fn create_pair() -> StablePair {
@@ -922,6 +978,58 @@ mod tests {
 
     #[test]
     fn test_expecte() {}
+
+    fn npool_for_withdraws() -> StablePair {
+        let td = vec![
+            TokenDataInput {
+                balance: 3000000000000000000000,
+                decimals: 18,
+            },
+            TokenDataInput {
+                balance: 1999999999999999999999,
+                decimals: 18,
+            },
+            TokenDataInput {
+                balance: 1000000000000000000000,
+                decimals: 18,
+            },
+        ];
+        let ti = HashMap::from([
+            (
+                hex::decode("836426076347dc312b950be54846d6415795b32bc664a08ceb034fd7358a2388")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                0,
+            ),
+            (
+                hex::decode("9f556d1b20ed9125b2f3818bad6bb38dff45e4816e4ae151afea4f4f16ea2865")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                1,
+            ),
+            (
+                hex::decode("e35765673ccc6c11889483944fcbc005af10c5980eada57f7f080442252f2e2a")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                2,
+            ),
+        ]);
+        let a = AmplificationCoefficient {
+            value: Natural::from(900u64),
+            precision: Natural::ONE,
+        };
+        let fee = FeeParams {
+            denominator: Natural::from(1000000u32),
+            pool_numerator: Natural::from(3000u64),
+            beneficiary_numerator: Natural::ZERO,
+        };
+        let pair = StablePair::new(td, ti, a, fee, 5990402341793730359785).unwrap();
+
+        pair
+    }
 
     #[test]
     fn test_int() {
