@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-
 use anyhow::anyhow;
+use malachite_base::num::arithmetic::traits::DivRound;
 use malachite_base::num::{arithmetic::traits::Pow, basic::traits::*};
+use malachite_base::rounding_modes::RoundingMode;
 use malachite_nz::natural::Natural;
+use std::borrow::Borrow;
+use std::collections::HashMap;
 
 use crate::normal_pair::OneAmountSwapResult;
 use crate::{
@@ -445,19 +447,13 @@ impl StablePair {
         self.fee = fee_params;
     }
 
-    // function _xp_mem(uint128[] _balances) internal view returns(uint256[]) {
-    // uint256[] result = new uint256[](0);
-    //
-    // for (uint8 i = 0; i < N_COINS; i++) {
-    // result.push(math.muldiv(tokenData[i].rate, _balances[i], PRECISION));
-    // }
-    //
-    // return result;
-    // }
-
-    fn xp_mem(&self, balances: &[Natural]) -> Option<Vec<Natural>> {
+    fn xp_mem<I, Item>(&self, balances: I) -> Option<Vec<Natural>>
+    where
+        I: Iterator<Item = Item>,
+        Item: Borrow<Natural>,
+    {
         let mut result = Vec::new();
-        for (i, balance) in balances.iter().enumerate() {
+        for (i, balance) in balances.into_iter().enumerate() {
             let token_data = self.token_data.get(i)?;
             result.push(mul_div(&token_data.rate, balance, &self.precision)?);
         }
@@ -473,7 +469,7 @@ impl StablePair {
             .cloned()
             .collect();
 
-        let d0 = self.get_d(&self.xp_mem(&old_balances)?)?;
+        let d0 = self.get_d(&self.xp_mem(old_balances.iter())?)?;
 
         let mut new_balances = old_balances.clone();
         let mut pool_fees = vec![Natural::ZERO; self.token_data.len()];
@@ -488,7 +484,7 @@ impl StablePair {
             new_balances[i] += Natural::from(*amount);
         }
 
-        let d1 = self.get_d(&self.xp_mem(&new_balances)?)?;
+        let d1 = self.get_d(&self.xp_mem(new_balances.iter())?)?;
         if has_zero_balance && self.lp_supply == Natural::ZERO || d0 >= d1 {
             return None;
         }
@@ -523,7 +519,7 @@ impl StablePair {
                 differences[i] = difference.clone();
             }
 
-            let d2 = self.get_d(&self.xp_mem(&new_balances)?)?;
+            let d2 = self.get_d(&self.xp_mem(new_balances.iter())?)?;
             lp_reward = (&mul_div(&self.lp_supply, &(d2 - &d0), &d0)?)
                 .try_into()
                 .ok()?;
@@ -613,6 +609,305 @@ impl StablePair {
 
         u128::try_from(&lp_res).ok()
     }
+
+    // expectedOneCoinWithdrawalSpendAmount
+    pub fn expected_one_coin_withdrawal_spend_amount(
+        &self,
+        receive_amount: u128,
+        receive_token_root: [u8; 32],
+    ) -> Option<u128> {
+        let i = *self.token_index.get(&receive_token_root)?;
+
+        self.get_expected_lp_amount(i as usize, receive_amount)
+    }
+
+    // expectedWithdrawLiquidityOneCoin
+    pub fn expected_withdraw_liquidity_one_coin(
+        &self,
+        amount: u128,
+        token: [u8; 32],
+    ) -> Option<WithdrawResultV2> {
+        let index = self.token_index.get(&token)?;
+        self.expected_withdraw_liquidity_one_coin_inner(amount, *index as usize)
+    }
+
+    #[allow(non_snake_case)]
+    fn expected_withdraw_liquidity_one_coin_inner(
+        &self,
+        token_amount: u128,
+        i: usize,
+    ) -> Option<WithdrawResultV2> {
+        let old_balances: Vec<_> = self.token_data.iter().map(|x| x.balance.clone()).collect();
+        let old_lp_supply = self.lp_supply.clone();
+
+        let token_amount = Natural::from(token_amount);
+
+        let mut pool_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut beneficiary_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut differences = vec![0u128; self.token_data.len()];
+        let mut sell = vec![false; self.token_data.len()];
+        let mut amounts = vec![Natural::ZERO; self.token_data.len()];
+
+        let xp_mem = self.xp_mem(old_balances.iter())?;
+
+        let mut result_balances = old_balances.clone();
+
+        let D0 = self.get_d(&xp_mem)?;
+        let D1 = &D0 - &mul_div(&token_amount, &D0, &old_lp_supply)?;
+        let lp_fee = mul_divc_mal(
+            &token_amount,
+            &self.fee.beneficiary_numerator + &self.fee.pool_numerator,
+            &self.fee.denominator,
+        )?;
+        let d1_fee = &D0 - &mul_div(&token_amount - &lp_fee, &D0, &old_lp_supply)?;
+
+        let new_y0 = self.get_y_d(i, xp_mem.clone(), D1.clone())?;
+        let new_y = self.get_y_d(i, xp_mem.clone(), d1_fee)?;
+
+        let dy_0 = (&xp_mem[i] - new_y0) / &self.token_data[i].precision_mul; // without fee
+
+        let dy = (&xp_mem[i] - &new_y) / &self.token_data[i].precision_mul;
+
+        for j in 0..self.token_data.len() {
+            let dx_expected = if j == i {
+                sell[j] = false;
+                mul_div(&xp_mem[j], &D1, &D0)? - &new_y
+            } else {
+                sell[j] = true;
+                &xp_mem[j] - mul_div(&xp_mem[j], &D1, &D0)?
+            };
+            differences[j] = (&dx_expected).try_into().ok()?;
+        }
+
+        let dy_fee = &dy_0 - &dy;
+        beneficiary_fees[i] = mul_div(
+            &dy_fee,
+            &self.fee.beneficiary_numerator,
+            &self.fee.pool_numerator + &self.fee.beneficiary_numerator,
+        )?;
+        pool_fees[i] = &dy_fee - &beneficiary_fees[i];
+        amounts[i] = dy.clone();
+        result_balances[i] = &old_balances[i] - dy;
+
+        Some(WithdrawResultV2 {
+            lp_amount: (&token_amount).try_into().ok()?,
+            old_balances: old_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            amounts: amounts
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            result_balances: result_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            invariant: (&D1).try_into().ok()?,
+            differences,
+            sell,
+            pool_fees: pool_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            beneficiary_fees: beneficiary_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    #[allow(non_snake_case)]
+    fn get_y_d(&self, i: usize, xp: Vec<Natural>, D: Natural) -> Option<Natural> {
+        if i >= self.token_data.len() {
+            return None;
+        }
+
+        let n_coins = Natural::from(self.token_data.len());
+
+        let Ann = &self.a.value * Natural::from(self.token_data.len());
+        let mut c = D.clone();
+        let mut S = Natural::ZERO;
+        let mut _x = Natural::ZERO;
+
+        for _i in 0..self.token_data.len() {
+            if _i == i {
+                continue;
+            }
+            _x = xp[_i].clone();
+            S += &_x;
+            c = mul_div(&c, &D, &_x * &n_coins)?;
+        }
+
+        c = mul_div(&c, &D * &self.a.precision, &Ann * &n_coins)?;
+        let b = &S + mul_div(&D, &self.a.precision, &Ann)?;
+
+        let mut y_prev;
+        let mut y = D.clone();
+
+        for _i in 0..=255 {
+            y_prev = y.clone();
+            y = (&y * &y + &c) / (&y * Natural::from(2u8) + &b - &D);
+            let diff = if y > y_prev { &y - y_prev } else { y_prev - &y };
+            if diff <= Natural::ONE {
+                return Some(y);
+            }
+        }
+
+        None
+    }
+
+    pub fn expected_one_coin_deposit_liquidity(
+        &self,
+        spent_token_root: Address,
+        amount: u128,
+    ) -> Option<DepositLiquidityResultV2> {
+        let i = self.token_index.get(&spent_token_root)?;
+        self.expected_one_coin_deposit_liquidity_inner(Natural::from(amount), *i as usize)
+    }
+
+    fn expected_one_coin_deposit_liquidity_inner(
+        &self,
+        amount: Natural,
+        i: usize,
+    ) -> Option<DepositLiquidityResultV2> {
+        let old_balances = self
+            .token_data
+            .iter()
+            .map(|x| x.balance.clone())
+            .collect::<Vec<_>>();
+
+        let d0 = self.get_d(&self.xp_mem(old_balances.iter())?)?;
+
+        let mut new_balances = old_balances.clone();
+
+        let mut pool_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut beneficiary_fees = vec![Natural::ZERO; self.token_data.len()];
+        let mut result_balances = old_balances.clone();
+        let mut differences = vec![Natural::ZERO; self.token_data.len()];
+        let mut amounts = vec![Natural::ZERO; self.token_data.len()];
+
+        let mut sell = vec![false; self.token_data.len()];
+
+        new_balances[i] += &amount;
+        amounts[i] = amount.clone();
+
+        let d1 = self.get_d(&self.xp_mem(new_balances.iter())?)?;
+
+        if d0 >= d1 {
+            return None;
+        }
+
+        for j in 0..self.token_data.len() {
+            let ideal_balance = mul_div(&d1, &old_balances[j], &d0)?;
+            let new_balance = new_balances[j].clone();
+            let difference = if ideal_balance > new_balance {
+                &ideal_balance - &new_balance
+            } else {
+                &new_balance - &ideal_balance
+            };
+            differences[i] = difference.clone();
+            sell[i] = ideal_balance < new_balance;
+        }
+
+        let fees = mul_div(
+            &amount,
+            &self.fee.beneficiary_numerator + &self.fee.pool_numerator,
+            &self.fee.denominator,
+        )?;
+        beneficiary_fees[i] = mul_div(
+            &fees,
+            &self.fee.beneficiary_numerator,
+            &self.fee.pool_numerator + &self.fee.beneficiary_numerator,
+        )?;
+        pool_fees[i] = &fees - &beneficiary_fees[i];
+        result_balances[i] = &new_balances[i] - &beneficiary_fees[i];
+        new_balances[i] = &new_balances[i] - &pool_fees[i] - &beneficiary_fees[i];
+
+        let d2 = self.get_d(&self.xp_mem(new_balances.iter())?)?;
+        let lp_reward = mul_div(&self.lp_supply, &d2 - &d0, &d0)?;
+
+        if lp_reward == Natural::ZERO {
+            return None;
+        }
+
+        Some(DepositLiquidityResultV2 {
+            old_balances: old_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            amounts: amounts
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            lp_reward: (&lp_reward).try_into().ok()?,
+            result_balances: result_balances
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            invariant: (&d1).try_into().ok()?,
+            differences: differences
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            sell,
+            pool_fees: pool_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+            beneficiary_fees: beneficiary_fees
+                .iter()
+                .map(|x| x.try_into().ok())
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    pub fn expected_deposit_spend_amount(&self, root: Address, amount: u128) -> Option<u128> {
+        let i = self.token_index.get(&root)?;
+
+        self.expected_deposit_spend_amount_inner(*i as usize, &Natural::from(amount))
+    }
+
+    fn expected_deposit_spend_amount_inner(&self, i: usize, lp: &Natural) -> Option<u128> {
+        if lp > &self.lp_supply || lp == &Natural::ZERO {
+            return None;
+        }
+
+        let xp = self.xp_mem(self.token_data.iter().map(|x| x.balance.clone()))?;
+        let d0 = self.get_d(&xp)?;
+        let d2 = if self.lp_supply > Natural::ZERO {
+            &d0 + mul_div(&d0, lp, &self.lp_supply)?
+        } else {
+            lp.clone()
+        };
+
+        let y_minus_fee = self.get_y_d(i, xp.clone(), d2)?;
+        let dy_minus_fee = &y_minus_fee - &xp[i];
+        let dy = mul_divc_mal(
+            &dy_minus_fee,
+            &self.fee.denominator,
+            &self.fee.denominator - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator),
+        )?;
+
+        (&dy.div_round(
+            self.token_data[i].precision_mul.clone(),
+            RoundingMode::Ceiling,
+        ))
+            .try_into()
+            .ok()
+    }
+}
+
+pub struct WithdrawResultV2 {
+    pub lp_amount: u128,
+    pub old_balances: Vec<u128>,
+    pub amounts: Vec<u128>,
+    pub result_balances: Vec<u128>,
+    pub invariant: u128,
+    pub differences: Vec<u128>,
+    pub sell: Vec<bool>,
+    pub pool_fees: Vec<u128>,
+    pub beneficiary_fees: Vec<u128>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -977,7 +1272,215 @@ mod tests {
     }
 
     #[test]
-    fn test_expecte() {}
+    fn test_expected_withdraw_one_coin() {
+        let pair = npool_for_single();
+
+        let one = hex::decode("8276b9b9701c49addbb9dbb4e494cdc790df456c40600e4f72b1d39b50aba1c9")
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let res = pair
+            .expected_withdraw_liquidity_one_coin(10000, one)
+            .unwrap();
+
+        assert_eq!(res.lp_amount, 10000);
+        assert_eq!(res.amounts[0], 9969999999996);
+        assert_eq!(res.amounts[1], 0);
+        assert_eq!(res.amounts[2], 0);
+
+        assert_eq!(res.result_balances[0], 9999999990030000000004);
+        assert_eq!(res.result_balances[1], 10000000000000000000000);
+        assert_eq!(res.result_balances[2], 10000000000000000000000);
+
+        assert_eq!(res.differences[0], 6636666666662);
+        assert_eq!(res.differences[1], 3333333333334);
+        assert_eq!(res.differences[2], 3333333333334);
+
+        assert_eq!(res.pool_fees[0], 30000000000);
+        assert_eq!(res.pool_fees[1], 0);
+        assert_eq!(res.pool_fees[2], 0);
+
+        assert_eq!(res.beneficiary_fees[0], 0);
+        assert_eq!(res.beneficiary_fees[1], 0);
+        assert_eq!(res.beneficiary_fees[2], 0);
+
+        assert_eq!(res.sell[0], false);
+        assert_eq!(res.sell[1], true);
+        assert_eq!(res.sell[2], true);
+
+        assert_eq!(res.invariant, 29999999990000000000000);
+
+        assert_eq!(res.old_balances[0], 10000000000000000000000);
+        assert_eq!(res.old_balances[1], 10000000000000000000000);
+        assert_eq!(res.old_balances[2], 10000000000000000000000);
+
+        let two = hex::decode("ad0ed85937d1ef51d04f28fb3621f911b58a9b78892dec0f830a946f4cc1585a")
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let res = pair
+            .expected_withdraw_liquidity_one_coin(14888888, two)
+            .unwrap();
+
+        assert_eq!(res.lp_amount, 14888888);
+        assert_eq!(res.amounts[0], 0);
+        assert_eq!(res.amounts[1], 14844220991847907);
+        assert_eq!(res.amounts[2], 0);
+
+        assert_eq!(res.result_balances[0], 10000000000000000000000);
+        assert_eq!(res.result_balances[1], 9999985155779008152093);
+        assert_eq!(res.result_balances[2], 10000000000000000000000);
+
+        assert_eq!(res.differences[0], 4962962666666667);
+        assert_eq!(res.differences[1], 9881258325181240);
+        assert_eq!(res.differences[2], 4962962666666667);
+
+        assert_eq!(res.pool_fees[0], 0);
+        assert_eq!(res.pool_fees[1], 44666999950866);
+        assert_eq!(res.pool_fees[2], 0);
+
+        assert_eq!(res.beneficiary_fees[0], 0);
+        assert_eq!(res.beneficiary_fees[1], 0);
+        assert_eq!(res.beneficiary_fees[2], 0);
+
+        assert_eq!(res.sell[0], true);
+        assert_eq!(res.sell[1], false);
+        assert_eq!(res.sell[2], true);
+
+        assert_eq!(res.invariant, 29999985111112000000000);
+
+        assert_eq!(res.old_balances[0], 10000000000000000000000);
+        assert_eq!(res.old_balances[1], 10000000000000000000000);
+        assert_eq!(res.old_balances[2], 10000000000000000000000);
+
+        let three = hex::decode("d661a57349e301d15f8db3d0996c2a3c68c1cf147623b3a32fcb315e935db109")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair
+            .expected_withdraw_liquidity_one_coin(9999999999999, three)
+            .unwrap();
+
+        assert_eq!(res.lp_amount, 9999999999999);
+        assert_eq!(res.amounts[0], 0);
+        assert_eq!(res.amounts[1], 0);
+        assert_eq!(res.amounts[2], 9839687990770942485190);
+
+        assert_eq!(res.result_balances[0], 10000000000000000000000);
+        assert_eq!(res.result_balances[1], 10000000000000000000000);
+        assert_eq!(res.result_balances[2], 160312009229057514810);
+
+        assert_eq!(res.differences[0], 3333333333333000000000);
+        assert_eq!(res.differences[1], 3333333333333000000000);
+        assert_eq!(res.differences[2], 6506354657437942485190);
+
+        assert_eq!(res.pool_fees[0], 0);
+        assert_eq!(res.pool_fees[1], 0);
+        assert_eq!(res.pool_fees[2], 15821275719351258134);
+
+        assert_eq!(res.beneficiary_fees[0], 0);
+        assert_eq!(res.beneficiary_fees[1], 0);
+        assert_eq!(res.beneficiary_fees[2], 0);
+
+        assert_eq!(res.sell[0], true);
+        assert_eq!(res.sell[1], true);
+        assert_eq!(res.sell[2], false);
+
+        assert_eq!(res.invariant, 20000000000001000000000);
+
+        assert_eq!(res.old_balances[0], 10000000000000000000000);
+        assert_eq!(res.old_balances[1], 10000000000000000000000);
+        assert_eq!(res.old_balances[2], 10000000000000000000000);
+    }
+
+    #[test]
+    fn expected_deposit_one_coin() {
+        let pair = npool_for_single();
+
+        let one = hex::decode("8276b9b9701c49addbb9dbb4e494cdc790df456c40600e4f72b1d39b50aba1c9")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_one_coin_deposit_liquidity(one, 12345);
+
+        assert!(res.is_none());
+
+        let two = hex::decode("ad0ed85937d1ef51d04f28fb3621f911b58a9b78892dec0f830a946f4cc1585a")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_one_coin_deposit_liquidity(two, 12345);
+        assert!(res.is_none());
+
+        let three = hex::decode("d661a57349e301d15f8db3d0996c2a3c68c1cf147623b3a32fcb315e935db109")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_one_coin_deposit_liquidity(three, 12345);
+        assert!(res.is_none());
+
+        let res = pair
+            .expected_one_coin_deposit_liquidity(three, 12131322211231)
+            .unwrap();
+
+        assert_eq!(res.lp_reward, 12094);
+        assert_eq!(res.amounts[0], 0);
+        assert_eq!(res.amounts[1], 0);
+        assert_eq!(res.amounts[2], 12131322211231);
+
+        assert_eq!(res.result_balances[0], 10000000000000000000000);
+        assert_eq!(res.result_balances[1], 10000000000000000000000);
+        assert_eq!(res.result_balances[2], 10000000012131322211231);
+
+        assert_eq!(res.differences[0], 0);
+        assert_eq!(res.differences[1], 0);
+        assert_eq!(res.differences[2], 8087548140823);
+
+        assert_eq!(res.pool_fees[0], 0);
+        assert_eq!(res.pool_fees[1], 0);
+        assert_eq!(res.pool_fees[2], 36393966633);
+
+        assert_eq!(res.beneficiary_fees[0], 0);
+        assert_eq!(res.beneficiary_fees[1], 0);
+        assert_eq!(res.beneficiary_fees[2], 0);
+
+        assert_eq!(res.sell[0], false);
+        assert_eq!(res.sell[1], false);
+        assert_eq!(res.sell[2], true);
+
+        assert_eq!(res.invariant, 30000000012131322211225);
+    }
+
+    #[test]
+    fn expected_deposit_one_coin_spend_amount() {
+        let pair = npool_for_single();
+
+        let one = hex::decode("8276b9b9701c49addbb9dbb4e494cdc790df456c40600e4f72b1d39b50aba1c9")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_deposit_spend_amount(one, 1488).unwrap();
+
+        assert_eq!(res, 1492477432297);
+
+        let two = hex::decode("ad0ed85937d1ef51d04f28fb3621f911b58a9b78892dec0f830a946f4cc1585a")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair
+            .expected_deposit_spend_amount(two, 1488111111111)
+            .unwrap();
+        assert_eq!(res, 1492665202802920587939);
+
+        let three = hex::decode("d661a57349e301d15f8db3d0996c2a3c68c1cf147623b3a32fcb315e935db109")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let res = pair.expected_deposit_spend_amount(three, 1).unwrap();
+        assert_eq!(res, 1003009028);
+    }
 
     fn npool_for_withdraws() -> StablePair {
         let td = vec![
@@ -1027,6 +1530,58 @@ mod tests {
             beneficiary_numerator: Natural::ZERO,
         };
         let pair = StablePair::new(td, ti, a, fee, 5990402341793730359785).unwrap();
+
+        pair
+    }
+
+    fn npool_for_single() -> StablePair {
+        let td = vec![
+            TokenDataInput {
+                balance: 10000000000000000000000,
+                decimals: 18,
+            },
+            TokenDataInput {
+                balance: 10000000000000000000000,
+                decimals: 18,
+            },
+            TokenDataInput {
+                balance: 10000000000000000000000,
+                decimals: 18,
+            },
+        ];
+        let ti = HashMap::from([
+            (
+                hex::decode("8276b9b9701c49addbb9dbb4e494cdc790df456c40600e4f72b1d39b50aba1c9")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                0,
+            ),
+            (
+                hex::decode("ad0ed85937d1ef51d04f28fb3621f911b58a9b78892dec0f830a946f4cc1585a")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                1,
+            ),
+            (
+                hex::decode("d661a57349e301d15f8db3d0996c2a3c68c1cf147623b3a32fcb315e935db109")
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                2,
+            ),
+        ]);
+        let a = AmplificationCoefficient {
+            value: Natural::from(900u64),
+            precision: Natural::ONE,
+        };
+        let fee = FeeParams {
+            denominator: Natural::from(1000000u32),
+            pool_numerator: Natural::from(3000u64),
+            beneficiary_numerator: Natural::ZERO,
+        };
+        let pair = StablePair::new(td, ti, a, fee, 30000000000000).unwrap();
 
         pair
     }
