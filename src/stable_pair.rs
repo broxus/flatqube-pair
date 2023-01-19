@@ -957,6 +957,44 @@ mod tests {
             .unwrap();
         assert_eq!(res.amount, 5530869000000000);
         assert_eq!(res.fee, 510423550381407695195061911147652318);
+
+        let token_data = vec![
+            TokenDataInput {
+                decimals: 18,
+                balance: 899998992992000563087962,
+            },
+            TokenDataInput {
+                decimals: 6,
+                balance: 900003012011,
+            },
+            TokenDataInput {
+                decimals: 6,
+                balance: 899997995000,
+            },
+        ];
+
+        let token_index = HashMap::from([([0; 32], 0), ([1; 32], 1), ([2; 32], 2)]);
+        let pair = StablePair::new(
+            token_data,
+            token_index,
+            AmplificationCoefficient {
+                value: Natural::from(2000u32),
+                precision: Natural::ONE,
+            },
+            FeeParams {
+                denominator: Natural::from(1000000u32),
+                pool_numerator: Natural::from(250u64),
+                beneficiary_numerator: Natural::from(250u64),
+            },
+            2700000000000000,
+        )
+        .unwrap();
+
+        let res = pair
+            .expected_exchange_extended(1000, &[0; 32], &[1; 32])
+            .unwrap();
+        assert_eq!(res.amount, 1000500247892834);
+        assert_eq!(res.fee, 500250123947);
     }
 
     #[test]
