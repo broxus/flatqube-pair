@@ -1,1 +1,1 @@
-tonswap-pair
+flatqube-pair

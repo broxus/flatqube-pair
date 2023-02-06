@@ -205,10 +205,11 @@ impl StablePair {
             &self.token_data[j as usize].rate,
         )?;
 
-        if dy <= self.token_data[j as usize].balance && dy > Natural::ZERO
-        // && (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
-        // && (x_beneficiary_fee > Natural::ZERO
-        //     || self.fee.beneficiary_numerator == Natural::ZERO)
+        if dy <= self.token_data[j as usize].balance
+            && dy > Natural::ZERO
+            && (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
+            && (x_beneficiary_fee > Natural::ZERO
+                || self.fee.beneficiary_numerator == Natural::ZERO)
         {
             Some(ExpectedExchangeResult {
                 amount: dy,
@@ -254,7 +255,10 @@ impl StablePair {
         )?;
         let x_pool_fee = x_fee - &x_beneficiary_fee;
 
-        if dx > Natural::ZERO {
+        if (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
+            && (x_beneficiary_fee > Natural::ZERO
+                || self.fee.beneficiary_numerator == Natural::ZERO)
+        {
             Some(ExpectedExchangeResult {
                 amount: dx,
                 pool_fee: x_pool_fee,
