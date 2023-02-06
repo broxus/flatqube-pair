@@ -239,7 +239,7 @@ impl StablePair {
             &self.precision,
             &self.token_data[i as usize].rate,
         )?;
-        let dx = mul_divc_mal(&dx_raw, &self.fee.denominator, &fee_d_minus_n)?;
+        let dx = mul_divc_mal(dx_raw, &self.fee.denominator, fee_d_minus_n)?;
 
         let x_fee = mul_divc_mal(
             &dx,
@@ -516,7 +516,7 @@ impl StablePair {
             }
 
             let d2 = self.get_d(&self.xp_mem(new_balances.iter())?)?;
-            lp_reward = (&mul_div(&self.lp_supply, &(d2 - &d0), &d0)?)
+            lp_reward = (&mul_div(&self.lp_supply, d2 - &d0, &d0)?)
                 .try_into()
                 .ok()?;
         } else {
@@ -596,9 +596,9 @@ impl StablePair {
         xp[i] = &xp[i] - &dy;
         let d1 = self.get_d(&xp)?;
 
-        let lp_raw = mul_divc_mal(&self.lp_supply, &(&d0 - &d1), &d0)?;
+        let lp_raw = mul_divc_mal(&self.lp_supply, &d0 - &d1, &d0)?;
         let lp_res = mul_divc_mal(
-            &lp_raw,
+            lp_raw,
             &self.fee.denominator,
             &self.fee.denominator - (&self.fee.pool_numerator + &self.fee.beneficiary_numerator),
         )?;
@@ -880,7 +880,7 @@ impl StablePair {
         let y_minus_fee = self.get_y_d(i, xp.clone(), d2)?;
         let dy_minus_fee = &y_minus_fee - &xp[i];
         let dy = mul_divc_mal(
-            &dy_minus_fee,
+            dy_minus_fee,
             &self.fee.denominator,
             &self.fee.denominator - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator),
         )?;
@@ -894,6 +894,7 @@ impl StablePair {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithdrawResultV2 {
     pub lp_amount: u128,
     pub old_balances: Vec<u128>,
