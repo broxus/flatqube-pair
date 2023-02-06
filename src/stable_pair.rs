@@ -205,11 +205,10 @@ impl StablePair {
             &self.token_data[j as usize].rate,
         )?;
 
-        if dy <= self.token_data[j as usize].balance
-            && dy > Natural::ZERO
-            && (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
-            && (x_beneficiary_fee > Natural::ZERO
-                || self.fee.beneficiary_numerator == Natural::ZERO)
+        if dy <= self.token_data[j as usize].balance && dy > Natural::ZERO
+        // && (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
+        // && (x_beneficiary_fee > Natural::ZERO
+        //     || self.fee.beneficiary_numerator == Natural::ZERO)
         {
             Some(ExpectedExchangeResult {
                 amount: dy,
@@ -255,10 +254,7 @@ impl StablePair {
         )?;
         let x_pool_fee = x_fee - &x_beneficiary_fee;
 
-        if (x_pool_fee > Natural::ZERO || self.fee.pool_numerator == Natural::ZERO)
-            && (x_beneficiary_fee > Natural::ZERO
-                || self.fee.beneficiary_numerator == Natural::ZERO)
-        {
+        if dx > Natural::ZERO {
             Some(ExpectedExchangeResult {
                 amount: dx,
                 pool_fee: x_pool_fee,
@@ -991,10 +987,48 @@ mod tests {
         .unwrap();
 
         let res = pair
+            .expected_exchange_extended(1000, &[1; 32], &[0; 32])
+            .unwrap();
+        assert_eq!(res.amount, 998999997770010);
+        assert_eq!(res.fee, 1);
+
+        let token_data = vec![
+            TokenDataInput {
+                decimals: 6,
+                balance: 11190776580,
+            },
+            TokenDataInput {
+                decimals: 18,
+                balance: 10760701702466899679822,
+            },
+            TokenDataInput {
+                decimals: 6,
+                balance: 11149517599,
+            },
+        ];
+
+        let token_index = HashMap::from([([0; 32], 0), ([1; 32], 1), ([2; 32], 2)]);
+        let pair = StablePair::new(
+            token_data,
+            token_index,
+            AmplificationCoefficient {
+                value: Natural::from(2000u32),
+                precision: Natural::ONE,
+            },
+            FeeParams {
+                denominator: Natural::from(1000000u32),
+                pool_numerator: Natural::from(0u64),
+                beneficiary_numerator: Natural::from(500u64),
+            },
+            33100993305275,
+        )
+        .unwrap();
+
+        let res = pair
             .expected_exchange_extended(1000, &[0; 32], &[1; 32])
             .unwrap();
-        assert_eq!(res.amount, 1000500247892834);
-        assert_eq!(res.fee, 500250123947);
+        assert_eq!(res.amount, 998980317545819);
+        assert_eq!(res.fee, 1);
     }
 
     #[test]
