@@ -806,8 +806,8 @@ impl StablePair {
             } else {
                 &new_balance - &ideal_balance
             };
-            differences[i] = difference.clone();
-            sell[i] = ideal_balance < new_balance;
+            differences[j] = difference.clone();
+            sell[j] = ideal_balance < new_balance;
         }
 
         let fees = mul_div(
@@ -876,7 +876,7 @@ impl StablePair {
         let xp = self.xp_mem(self.token_data.iter().map(|x| x.balance.clone()))?;
         let d0 = self.get_d(&xp)?;
         let d2 = if self.lp_supply > Natural::ZERO {
-            &d0 + mul_div(&d0, lp, &self.lp_supply)?
+            &d0 + mul_divc_mal(&d0, lp, &self.lp_supply)?
         } else {
             lp.clone()
         };
@@ -994,8 +994,8 @@ mod tests {
         let res = pair
             .expected_exchange_extended(1000, &[1; 32], &[0; 32])
             .unwrap();
-        assert_eq!(res.amount, 998999997770010);
-        assert_eq!(res.fee, 1);
+        assert_eq!(res.amount, 0);
+        assert_eq!(res.fee, 0);
 
         let token_data = vec![
             TokenDataInput {
@@ -1511,8 +1511,8 @@ mod tests {
         assert_eq!(res.result_balances[1], 10000000000000000000000);
         assert_eq!(res.result_balances[2], 10000000012131322211231);
 
-        assert_eq!(res.differences[0], 0);
-        assert_eq!(res.differences[1], 0);
+        assert_eq!(res.differences[0], 4043774070408);
+        assert_eq!(res.differences[1], 4043774070408);
         assert_eq!(res.differences[2], 8087548140823);
 
         assert_eq!(res.pool_fees[0], 0);
@@ -1672,5 +1672,46 @@ mod tests {
         let int2 = u128::from_le_bytes(arr);
         dbg!(int2);
         assert_eq!(int.u64(), int2 as u64);
+    }
+
+    #[test]
+    fn test_deposit() {
+        let token_data = vec![
+            TokenDataInput {
+                decimals: 6,
+                balance: 914368094227,
+            },
+            TokenDataInput {
+                decimals: 18,
+                balance: 877809356052014984058390,
+            },
+            TokenDataInput {
+                decimals: 6,
+                balance: 897049561946,
+            },
+        ];
+
+        let token_index = HashMap::from([([0; 32], 0), ([1; 32], 1), ([2; 32], 2)]);
+        let pair = StablePair::new(
+            token_data,
+            token_index,
+            AmplificationCoefficient {
+                value: Natural::from(900u32),
+                precision: Natural::ONE,
+            },
+            FeeParams {
+                denominator: Natural::from(1000000u32),
+                pool_numerator: Natural::from(250u64),
+                beneficiary_numerator: Natural::from(250u64),
+            },
+            2689226563382761,
+        )
+        .unwrap();
+
+        let res = pair
+            .expected_deposit_spend_amount([1; 32], 1_000_000_000)
+            .unwrap();
+        println!("{}", res);
+        assert_eq!(1000476879669130732, res);
     }
 }
