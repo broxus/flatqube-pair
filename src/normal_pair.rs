@@ -73,7 +73,7 @@ pub enum Direction {
     RightToLeft,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SwapResult {
     pub amount: u128,
     pub fee: u128,
