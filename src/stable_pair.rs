@@ -5,6 +5,7 @@ use malachite_base::rounding_modes::RoundingMode;
 use malachite_nz::natural::Natural;
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::panic;
 
 use crate::normal_pair::OneAmountSwapResult;
 use crate::{
@@ -295,18 +296,33 @@ impl StablePair {
         let i = *self.token_index.get(spent_token)?;
         let j = *self.token_index.get(receive_token)?;
 
-        let result = self
-            .get_dy(i, j, Natural::from(amount))
-            .unwrap_or(ExpectedExchangeResult {
-                amount: Natural::ZERO,
-                pool_fee: Natural::ZERO,
-                beneficiary_fee: Natural::ZERO,
-            });
+        let result = panic::catch_unwind(|| {
+            let result =
+                self.get_dy(i, j, Natural::from(amount))
+                    .unwrap_or(ExpectedExchangeResult {
+                        amount: Natural::ZERO,
+                        pool_fee: Natural::ZERO,
+                        beneficiary_fee: Natural::ZERO,
+                    });
 
-        Some(SwapResult {
-            amount: u128::try_from(&result.amount).ok()?,
-            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
-        })
+            Some(SwapResult {
+                amount: u128::try_from(&result.amount).ok()?,
+                fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
+            })
+        });
+
+        if result.is_err() {
+            log::error!(
+                "expected_exchange_extended: i {}, j {}, amount {}, self {:#?}",
+                i,
+                j,
+                amount,
+                self
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     pub fn expected_exchange_extended_one_amount(
@@ -366,19 +382,33 @@ impl StablePair {
     ) -> Option<SwapResult> {
         let j = *self.token_index.get(receive_token_root)?;
         let i = *self.token_index.get(spent_token_root)?;
-
-        let result =
-            self.get_dx(i, j, Natural::from(receive_amount))
-                .unwrap_or(ExpectedExchangeResult {
+        let result = panic::catch_unwind(|| {
+            let result = self.get_dx(i, j, Natural::from(receive_amount)).unwrap_or(
+                ExpectedExchangeResult {
                     amount: Natural::ZERO,
                     pool_fee: Natural::ZERO,
                     beneficiary_fee: Natural::ZERO,
-                });
+                },
+            );
 
-        Some(SwapResult {
-            amount: u128::try_from(&result.amount).ok()?,
-            fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
-        })
+            Some(SwapResult {
+                amount: u128::try_from(&result.amount).ok()?,
+                fee: u128::try_from(&(result.pool_fee + result.beneficiary_fee)).ok()?,
+            })
+        });
+
+        if result.is_err() {
+            log::error!(
+                "expected_spend_amount_extended: i {}, j {}, amount {}, self {:#?}",
+                i,
+                j,
+                receive_amount,
+                self
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     pub fn expected_spend_amount_extended_one_amount(
@@ -617,8 +647,19 @@ impl StablePair {
         receive_token_root: [u8; 32],
     ) -> Option<u128> {
         let i = *self.token_index.get(&receive_token_root)?;
-
-        self.get_expected_lp_amount(i as usize, receive_amount)
+        let result =
+            panic::catch_unwind(|| self.get_expected_lp_amount(i as usize, receive_amount));
+        if result.is_err() {
+            log::error!(
+                "expected_one_coin_withdrawal_spend_amount: receive_amount {}, i {}, self {:?}",
+                receive_amount,
+                i,
+                self,
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     // expectedWithdrawLiquidityOneCoin
@@ -628,7 +669,20 @@ impl StablePair {
         token: [u8; 32],
     ) -> Option<WithdrawResultV2> {
         let index = self.token_index.get(&token)?;
-        self.expected_withdraw_liquidity_one_coin_inner(amount, *index as usize)
+        let result = panic::catch_unwind(|| {
+            self.expected_withdraw_liquidity_one_coin_inner(amount, *index as usize)
+        });
+        if result.is_err() {
+            log::error!(
+                "expected_withdraw_liquidity_one_coin: amount {}, index {}, self {:?}",
+                amount,
+                index,
+                self,
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     #[allow(non_snake_case)]
@@ -730,6 +784,7 @@ impl StablePair {
         let mut S = Natural::ZERO;
         let mut _x = Natural::ZERO;
 
+        #[allow(clippy::needless_range_loop)]
         for _i in 0..self.token_data.len() {
             if _i == i {
                 continue;
@@ -763,7 +818,21 @@ impl StablePair {
         amount: u128,
     ) -> Option<DepositLiquidityResultV2> {
         let i = self.token_index.get(&spent_token_root)?;
-        self.expected_one_coin_deposit_liquidity_inner(Natural::from(amount), *i as usize)
+        let result = panic::catch_unwind(|| {
+            self.expected_one_coin_deposit_liquidity_inner(Natural::from(amount), *i as usize)
+        });
+
+        if result.is_err() {
+            log::error!(
+                "expected_one_coin_deposit_liquidity: amount {}, i {}, self {:#?}",
+                amount,
+                i,
+                self
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     fn expected_one_coin_deposit_liquidity_inner(
@@ -864,8 +933,21 @@ impl StablePair {
 
     pub fn expected_deposit_spend_amount(&self, root: Address, amount: u128) -> Option<SwapResult> {
         let i = self.token_index.get(&root)?;
+        let result = panic::catch_unwind(|| {
+            self.expected_deposit_spend_amount_inner(*i as usize, &Natural::from(amount))
+        });
 
-        self.expected_deposit_spend_amount_inner(*i as usize, &Natural::from(amount))
+        if result.is_err() {
+            log::error!(
+                "expected_deposit_spend_amount: amount {}, i {}, self {:#?}",
+                amount,
+                i,
+                self
+            );
+            None
+        } else {
+            result.ok().flatten()
+        }
     }
 
     fn expected_deposit_spend_amount_inner(&self, i: usize, lp: &Natural) -> Option<SwapResult> {
@@ -897,12 +979,12 @@ impl StablePair {
             let dy = mul_divc_mal(
                 &dy_minus_fee,
                 &self.fee.denominator,
-                &(&self.fee.denominator
-                    - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator)),
+                &self.fee.denominator
+                    - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator),
             )?;
             let dy_fee = (&dy).checked_sub(&dy_minus_fee)?;
             let dy_fee = mul_divc_mal(
-                &dy_fee,
+                dy_fee,
                 &fee_precision_mul,
                 &self.token_data[i].precision_mul,
             )?;
@@ -914,8 +996,8 @@ impl StablePair {
             let dy = mul_divc_mal(
                 &dy_minus_fee,
                 &self.fee.denominator,
-                &(&self.fee.denominator
-                    - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator)),
+                &self.fee.denominator
+                    - (&self.fee.beneficiary_numerator + &self.fee.pool_numerator),
             )?;
             let dy_fee = (&dy).checked_sub(&dy_minus_fee)?;
             (dy, dy_fee)

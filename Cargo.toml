@@ -11,6 +11,7 @@ eint = "1.0.0"
 malachite-nz = "0.3.0"
 malachite-base = "0.3.0"
 anyhow = "1.0.38"
+log = { version = "0.4", features = ["std", "serde"] }
 
 [dev-dependencies]
 anyhow = "1.0.56"
