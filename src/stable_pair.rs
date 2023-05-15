@@ -313,7 +313,7 @@ impl StablePair {
 
         if result.is_err() {
             log::error!(
-                "expected_exchange_extended: i {}, j {}, amount {}, self {:#?}",
+                "expected_exchange_extended panic: i {}, j {}, amount {}, self {:#?}",
                 i,
                 j,
                 amount,
@@ -399,7 +399,7 @@ impl StablePair {
 
         if result.is_err() {
             log::error!(
-                "expected_spend_amount_extended: i {}, j {}, amount {}, self {:#?}",
+                "expected_spend_amount_extended panic: i {}, j {}, amount {}, self {:#?}",
                 i,
                 j,
                 receive_amount,
@@ -651,7 +651,7 @@ impl StablePair {
             panic::catch_unwind(|| self.get_expected_lp_amount(i as usize, receive_amount));
         if result.is_err() {
             log::error!(
-                "expected_one_coin_withdrawal_spend_amount: receive_amount {}, i {}, self {:?}",
+                "expected_one_coin_withdrawal_spend_amount panic: receive_amount {}, i {}, self {:?}",
                 receive_amount,
                 i,
                 self,
@@ -674,7 +674,7 @@ impl StablePair {
         });
         if result.is_err() {
             log::error!(
-                "expected_withdraw_liquidity_one_coin: amount {}, index {}, self {:?}",
+                "expected_withdraw_liquidity_one_coin panic: amount {}, index {}, self {:?}",
                 amount,
                 index,
                 self,
@@ -824,7 +824,7 @@ impl StablePair {
 
         if result.is_err() {
             log::error!(
-                "expected_one_coin_deposit_liquidity: amount {}, i {}, self {:#?}",
+                "expected_one_coin_deposit_liquidity panic: amount {}, i {}, self {:#?}",
                 amount,
                 i,
                 self
@@ -939,7 +939,7 @@ impl StablePair {
 
         if result.is_err() {
             log::error!(
-                "expected_deposit_spend_amount: amount {}, i {}, self {:#?}",
+                "expected_deposit_spend_amount panic: amount {}, i {}, self {:#?}",
                 amount,
                 i,
                 self
