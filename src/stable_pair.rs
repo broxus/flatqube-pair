@@ -477,6 +477,13 @@ impl StablePair {
         self.fee = fee_params;
     }
 
+    pub fn update_amplification_coefficient(
+        &mut self,
+        amplification_coefficient: AmplificationCoefficient,
+    ) {
+        self.a = amplification_coefficient;
+    }
+
     fn xp_mem<I, Item>(&self, balances: I) -> Option<Vec<Natural>>
     where
         I: Iterator<Item = Item>,
